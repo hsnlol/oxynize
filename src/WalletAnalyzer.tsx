@@ -3,7 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { PublicKey } from '@solana/web3.js';
 import { 
   ArrowLeft, Wallet, Coins, History, 
-  TrendingUp, TrendingDown, Activity, Box, Brain
+  TrendingUp, TrendingDown, Activity, Box, Brain,
+  ArrowUpRight, ArrowDownLeft, Repeat
 } from 'lucide-react';
 import { format } from 'date-fns';
 import Typewriter from 'typewriter-effect';
@@ -63,6 +64,7 @@ const WalletAnalyzer: React.FC = () => {
       try {
         setLoading(true);
         setError(null);
+        setAnalyzingTransactions(true);
 
         // Validate address
         try {
@@ -91,7 +93,14 @@ const WalletAnalyzer: React.FC = () => {
         setPortfolioValue(totalValue);
         setPortfolioChange(change24h);
 
+        // Fetch and analyze transactions
+        const txs = await solanaManager.getTransactions(address, 50);
+        const batchAnalysis = await transactionAnalyzer.analyzeBatch(txs);
+        setActivityAnalysis(batchAnalysis);
+        setTransactions(txs);
+
         setLoading(false);
+        setAnalyzingTransactions(false);
       } catch (err) {
         logger.error('Error in fetchWalletData:', err);
         setError(err instanceof Error ? err.message : 'Failed to fetch wallet data');
@@ -102,6 +111,17 @@ const WalletAnalyzer: React.FC = () => {
 
     fetchWalletData();
   }, [address]);
+
+  const getTransactionIcon = (type: string) => {
+    if (type.toLowerCase().includes('send')) {
+      return <ArrowUpRight className="w-4 h-4 text-red-500" />;
+    } else if (type.toLowerCase().includes('receive')) {
+      return <ArrowDownLeft className="w-4 h-4 text-green-500" />;
+    } else if (type.toLowerCase().includes('swap')) {
+      return <Repeat className="w-4 h-4 text-blue-500" />;
+    }
+    return <Activity className="w-4 h-4 text-white/50" />;
+  };
 
   if (loading) {
     return (
@@ -211,7 +231,7 @@ const WalletAnalyzer: React.FC = () => {
                       }}
                       onInit={(typewriter) => {
                         typewriter
-                          .typeString(activityAnalysis || "Click the Transactions tab to analyze wallet activity")
+                          .typeString(activityAnalysis || "Analyzing wallet activity...")
                           .start();
                       }}
                     />
@@ -229,29 +249,38 @@ const WalletAnalyzer: React.FC = () => {
                 <Activity className="w-5 h-5 text-white/50" />
               </div>
               <div className="space-y-4">
-                {transactions.slice(0, 5).map((tx) => (
-                  <div 
-                    key={tx.signature}
-                    className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl hover:bg-white/[0.05] transition-colors"
-                  >
-                    <div>
-                      <p className="font-medium">{tx.type}</p>
-                      <p className="text-sm text-white/50">
-                        {format(new Date(tx.timestamp), 'MMM dd HH:mm')}
-                      </p>
+                {transactions.length > 0 ? (
+                  transactions.slice(0, 5).map((tx) => (
+                    <div 
+                      key={tx.signature}
+                      className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl hover:bg-white/[0.05] transition-colors"
+                    >
+                      <div className="flex items-center gap-3">
+                        {getTransactionIcon(tx.type)}
+                        <div>
+                          <p className="font-medium">{tx.description || tx.type}</p>
+                          <p className="text-sm text-white/50">
+                            {format(new Date(tx.timestamp), 'MMM dd HH:mm')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="font-medium">
+                          {tx.amount.toFixed(3)} {tx.tokenSymbol}
+                        </p>
+                        <p className={`text-sm ${
+                          tx.status === 'success' ? 'text-green-500' : 'text-red-500'
+                        }`}>
+                          {tx.status}
+                        </p>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <p className="font-medium">
-                        {tx.amount} {tx.tokenSymbol || 'SOL'}
-                      </p>
-                      <p className={`text-sm ${
-                        tx.status === 'success' ? 'text-green-500' : 'text-red-500'
-                      }`}>
-                        {tx.status}
-                      </p>
-                    </div>
+                  ))
+                ) : (
+                  <div className="text-center text-white/50 py-4">
+                    No recent activity
                   </div>
-                ))}
+                )}
               </div>
             </div>
           </div>
@@ -279,33 +308,7 @@ const WalletAnalyzer: React.FC = () => {
             Tokens
           </button>
           <button
-            onClick={async () => {
-              setActiveTab('transactions');
-              if (transactions.length === 0) {
-                setAnalyzingTransactions(true);
-                try {
-                  // Fetch transactions only when clicking the Transactions tab
-                  const txs = await solanaManager.getTransactions(address!);
-                  const batchAnalysis = await transactionAnalyzer.analyzeBatch(txs);
-                  setActivityAnalysis(batchAnalysis);
-
-                  const processedTransactions = txs.map((tx) => ({
-                    signature: tx.signature || '',
-                    type: tx.type || 'Unknown',
-                    amount: tx.nativeTransfers?.[0]?.amount || 0,
-                    timestamp: tx.timestamp || Date.now(),
-                    status: 'success' as const,
-                    tokenSymbol: tx.tokenTransfers?.[0]?.mint ? 'Token' : 'SOL',
-                    fee: tx.fee || 0
-                  }));
-
-                  setTransactions(processedTransactions);
-                } catch (error) {
-                  logger.error('Error fetching transactions:', error);
-                }
-                setAnalyzingTransactions(false);
-              }
-            }}
+            onClick={() => setActiveTab('transactions')}
             className={`px-6 py-3 rounded-xl transition-all ${
               activeTab === 'transactions'
                 ? 'bg-white text-black'
@@ -387,15 +390,18 @@ const WalletAnalyzer: React.FC = () => {
                     key={tx.signature}
                     className="flex items-center justify-between p-4 bg-white/[0.02] rounded-xl hover:bg-white/[0.05] transition-colors"
                   >
-                    <div>
-                      <p className="font-medium">{tx.type}</p>
-                      <p className="text-sm text-white/50">
-                        {format(new Date(tx.timestamp), 'MMM dd HH:mm')}
-                      </p>
+                    <div className="flex items-center gap-3">
+                      {getTransactionIcon(tx.type)}
+                      <div>
+                        <p className="font-medium">{tx.description || tx.type}</p>
+                        <p className="text-sm text-white/50">
+                          {format(new Date(tx.timestamp), 'MMM dd HH:mm')}
+                        </p>
+                      </div>
                     </div>
                     <div className="text-right">
                       <p className="font-medium">
-                        {tx.amount} {tx.tokenSymbol || 'SOL'}
+                        {tx.amount.toFixed(3)} {tx.tokenSymbol}
                       </p>
                       <p className={`text-sm ${
                         tx.status === 'success' ? 'text-green-500' : 'text-red-500'
