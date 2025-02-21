@@ -84,28 +84,6 @@ const WalletAnalyzer: React.FC = () => {
         const tokenAccounts = await solanaManager.getTokenAccounts(address);
         setTokens(tokenAccounts);
 
-        // Fetch transactions with analysis
-        const txs = await solanaManager.getTransactions(address);
-        setAnalyzingTransactions(true);
-
-        // Analyze the batch of transactions
-        const batchAnalysis = await transactionAnalyzer.analyzeBatch(txs);
-        setActivityAnalysis(batchAnalysis);
-
-        // Process transactions
-        const processedTransactions = txs.map((tx) => ({
-          signature: tx.signature || '',
-          type: tx.type || 'Unknown',
-          amount: tx.nativeTransfers?.[0]?.amount || 0,
-          timestamp: tx.timestamp || Date.now(),
-          status: 'success' as const,
-          tokenSymbol: tx.tokenTransfers?.[0]?.mint ? 'Token' : 'SOL',
-          fee: tx.fee || 0
-        }));
-
-        setTransactions(processedTransactions);
-        setAnalyzingTransactions(false);
-
         // Calculate portfolio value
         const solValue = balance * currentSolPrice;
         const tokenValue = tokenAccounts.reduce((acc, token) => acc + (token.value || 0), 0);
@@ -233,7 +211,7 @@ const WalletAnalyzer: React.FC = () => {
                       }}
                       onInit={(typewriter) => {
                         typewriter
-                          .typeString(activityAnalysis || "No analysis available")
+                          .typeString(activityAnalysis || "Click the Transactions tab to analyze wallet activity")
                           .start();
                       }}
                     />
@@ -301,7 +279,33 @@ const WalletAnalyzer: React.FC = () => {
             Tokens
           </button>
           <button
-            onClick={() => setActiveTab('transactions')}
+            onClick={async () => {
+              setActiveTab('transactions');
+              if (transactions.length === 0) {
+                setAnalyzingTransactions(true);
+                try {
+                  // Fetch transactions only when clicking the Transactions tab
+                  const txs = await solanaManager.getTransactions(address!);
+                  const batchAnalysis = await transactionAnalyzer.analyzeBatch(txs);
+                  setActivityAnalysis(batchAnalysis);
+
+                  const processedTransactions = txs.map((tx) => ({
+                    signature: tx.signature || '',
+                    type: tx.type || 'Unknown',
+                    amount: tx.nativeTransfers?.[0]?.amount || 0,
+                    timestamp: tx.timestamp || Date.now(),
+                    status: 'success' as const,
+                    tokenSymbol: tx.tokenTransfers?.[0]?.mint ? 'Token' : 'SOL',
+                    fee: tx.fee || 0
+                  }));
+
+                  setTransactions(processedTransactions);
+                } catch (error) {
+                  logger.error('Error fetching transactions:', error);
+                }
+                setAnalyzingTransactions(false);
+              }
+            }}
             className={`px-6 py-3 rounded-xl transition-all ${
               activeTab === 'transactions'
                 ? 'bg-white text-black'
