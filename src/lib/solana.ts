@@ -14,6 +14,17 @@ interface TokenAccountInfo {
   logo?: string;
 }
 
+interface ProcessedTransaction {
+  signature: string;
+  type: string;
+  amount: number;
+  timestamp: number;
+  status: 'success' | 'error';
+  tokenSymbol?: string;
+  fee?: number;
+  description?: string;
+}
+
 class SolanaConnectionManager {
   private static instance: SolanaConnectionManager;
   private connection: Connection;
@@ -30,6 +41,78 @@ class SolanaConnectionManager {
       SolanaConnectionManager.instance = new SolanaConnectionManager();
     }
     return SolanaConnectionManager.instance;
+  }
+
+  private processTransaction(tx: HeliusTransaction, walletAddress: string): ProcessedTransaction | null {
+    try {
+      const MIN_SOL_AMOUNT = 0.001; // Minimum SOL amount to consider
+      const MIN_USD_VALUE = 1; // Minimum USD value to consider
+
+      let type = tx.type || 'Unknown';
+      let amount = 0;
+      let tokenSymbol = 'SOL';
+      let description = '';
+
+      // Process native SOL transfers
+      if (tx.nativeTransfers && tx.nativeTransfers.length > 0) {
+        const transfer = tx.nativeTransfers[0];
+        amount = transfer.amount / LAMPORTS_PER_SOL;
+
+        if (transfer.fromUserAccount === walletAddress) {
+          type = 'Send SOL';
+          description = `Sent ${amount.toFixed(3)} SOL`;
+        } else if (transfer.toUserAccount === walletAddress) {
+          type = 'Receive SOL';
+          description = `Received ${amount.toFixed(3)} SOL`;
+        }
+      }
+
+      // Process token transfers
+      if (tx.tokenTransfers && tx.tokenTransfers.length > 0) {
+        const transfer = tx.tokenTransfers[0];
+        amount = transfer.amount;
+        tokenSymbol = 'Token';
+
+        if (transfer.fromUserAccount === walletAddress) {
+          type = 'Send Token';
+          description = `Sent ${amount} ${tokenSymbol}`;
+        } else if (transfer.toUserAccount === walletAddress) {
+          type = 'Receive Token';
+          description = `Received ${amount} ${tokenSymbol}`;
+        }
+      }
+
+      // Check for swaps
+      const txString = JSON.stringify(tx).toLowerCase();
+      if (txString.includes('swap') || txString.includes('jupiter') || txString.includes('orca')) {
+        type = 'Swap';
+        description = 'Token Swap';
+      }
+
+      // Filter out small transactions
+      if (tokenSymbol === 'SOL' && amount < MIN_SOL_AMOUNT) {
+        return null;
+      }
+
+      // Skip transactions with no meaningful amount
+      if (amount === 0) {
+        return null;
+      }
+
+      return {
+        signature: tx.signature || '',
+        type,
+        amount,
+        timestamp: tx.timestamp || Date.now(),
+        status: 'success',
+        tokenSymbol,
+        fee: tx.fee || 0,
+        description
+      };
+    } catch (error) {
+      logger.error('Error processing transaction:', error);
+      return null;
+    }
   }
 
   async getBalance(address: string): Promise<number> {
@@ -167,9 +250,15 @@ class SolanaConnectionManager {
     }
   }
 
-  async getTransactions(address: string, limit = 20): Promise<HeliusTransaction[]> {
+  async getTransactions(address: string, limit = 20): Promise<ProcessedTransaction[]> {
     try {
-      return await heliusAPI.getTransactionHistory(address, limit);
+      const txs = await heliusAPI.getTransactionHistory(address, limit);
+      const processedTxs = txs
+        .map(tx => this.processTransaction(tx, address))
+        .filter((tx): tx is ProcessedTransaction => tx !== null)
+        .sort((a, b) => b.timestamp - a.timestamp);
+
+      return processedTxs;
     } catch (error) {
       logger.error('Error fetching transactions', {
         error: error instanceof Error ? error.message : 'Unknown error',
